@@ -1,0 +1,228 @@
+<?php
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+function argon_astro_is_qq_number($value) {
+    return (bool) preg_match('/^[1-9][0-9]{4,10}$/', trim((string) $value));
+}
+
+function argon_astro_is_valid_contact($contact) {
+    $contact = trim((string) $contact);
+    if ($contact === '') {
+        return false;
+    }
+    if (argon_astro_is_qq_number($contact)) {
+        return true;
+    }
+    return function_exists('is_email')
+        ? (bool) is_email($contact)
+        : (bool) filter_var($contact, FILTER_VALIDATE_EMAIL);
+}
+
+function argon_astro_normalize_contact_email($contact) {
+    $contact = trim((string) $contact);
+    if (argon_astro_is_qq_number($contact)) {
+        return $contact . '@qq.com';
+    }
+    return $contact;
+}
+
+function argon_astro_format_comment($comment, $parent_authors = array()) {
+    $id = (int) $comment->comment_ID;
+    $parent_id = (int) $comment->comment_parent;
+    $private = (bool) get_comment_meta($id, 'argon_private', true);
+    $pinned = (bool) get_comment_meta($id, 'argon_pinned', true);
+    $markdown = (bool) get_comment_meta($id, 'argon_markdown', true);
+    $upvotes = (int) get_comment_meta($id, 'argon_upvote', true);
+    $qq = (string) get_comment_meta($id, 'qq_number', true);
+    $history = json_decode((string) get_comment_meta($id, 'argon_edit_history', true), true);
+    if (!is_array($history)) {
+        $history = array();
+    }
+    $parent_author = '';
+    if ($parent_id > 0) {
+        if (isset($parent_authors[$parent_id])) {
+            $parent_author = (string) $parent_authors[$parent_id];
+        } elseif (function_exists('get_comment')) {
+            $parent_comment = get_comment($parent_id);
+            if ($parent_comment) {
+                $parent_author = (string) $parent_comment->comment_author;
+            }
+        }
+    }
+    $date = function_exists('mysql_to_rfc3339')
+        ? mysql_to_rfc3339($comment->comment_date_gmt)
+        : (string) $comment->comment_date_gmt;
+
+    return array(
+        'id' => $id,
+        'parent' => $parent_id,
+        'author' => (string) $comment->comment_author,
+        'date' => $date,
+        'content' => $private ? '' : (string) $comment->comment_content,
+        'url' => (string) $comment->comment_author_url,
+        'parentAuthor' => $parent_author,
+        'pinned' => $pinned,
+        'private' => $private,
+        'markdown' => $markdown,
+        'upvotes' => $upvotes,
+        'qq' => $qq,
+        'gravatar' => md5(strtolower(trim((string) $comment->comment_author_email))),
+        'userAgent' => isset($comment->comment_agent) ? (string) $comment->comment_agent : '',
+        'editHistory' => $history,
+    );
+}
+
+function argon_astro_export_comments($post_id) {
+    $comments = get_comments(array(
+        'post_id' => (int) $post_id,
+        'status' => 'approve',
+        'order' => 'ASC',
+    ));
+    $authors = array();
+    foreach ($comments as $comment) {
+        $authors[(int) $comment->comment_ID] = (string) $comment->comment_author;
+    }
+    return array_map(function ($comment) use ($authors) {
+        return argon_astro_format_comment($comment, $authors);
+    }, $comments);
+}
+
+function argon_astro_register_comment_routes() {
+    register_rest_route('argon-astro/v1', '/comments', array(
+        array(
+            'methods' => 'GET',
+            'permission_callback' => 'argon_astro_rest_permission',
+            'callback' => 'argon_astro_list_comments',
+        ),
+        array(
+            'methods' => 'POST',
+            'permission_callback' => 'argon_astro_rest_permission',
+            'callback' => 'argon_astro_create_comment',
+        ),
+    ));
+    register_rest_route('argon-astro/v1', '/comments/edit', array(
+        'methods' => 'POST',
+        'permission_callback' => 'argon_astro_rest_permission',
+        'callback' => 'argon_astro_edit_comment',
+    ));
+    register_rest_route('argon-astro/v1', '/comments/pin', array(
+        'methods' => 'POST',
+        'permission_callback' => 'argon_astro_rest_permission',
+        'callback' => 'argon_astro_pin_comment',
+    ));
+}
+
+function argon_astro_list_comments(WP_REST_Request $request) {
+    $post_id = (int) $request->get_param('post');
+    return argon_astro_export_comments($post_id);
+}
+
+function argon_astro_create_comment(WP_REST_Request $request) {
+    if ($request->get_param('action') === 'pin') {
+        return argon_astro_pin_comment($request);
+    }
+    $post_id = (int) $request->get_param('postId');
+    $content = trim((string) $request->get_param('content'));
+    $author = trim((string) $request->get_param('author'));
+    $contact = trim((string) $request->get_param('email'));
+    if ($post_id < 1 || $content === '' || strlen($content) > 2000 || $author === '' || !argon_astro_is_valid_contact($contact)) {
+        return new WP_Error('argon_astro_bad_comment', 'Comment payload is invalid.', array('status' => 400));
+    }
+
+    $is_qq = argon_astro_is_qq_number($contact);
+    $normalized_email = argon_astro_normalize_contact_email($contact);
+    $auto_approve = (bool) get_option('argon_astro_auto_approve', false);
+    $approved = $auto_approve ? 1 : (get_option('comment_moderation') ? 0 : 1);
+
+    $id = wp_new_comment(array(
+        'comment_post_ID' => $post_id,
+        'comment_content' => $content,
+        'comment_author' => $author,
+        'comment_author_email' => $normalized_email,
+        'comment_author_url' => esc_url_raw((string) $request->get_param('url')),
+        'comment_parent' => (int) $request->get_param('parent'),
+        'comment_approved' => $approved,
+    ), true);
+    if (is_wp_error($id)) {
+        return $id;
+    }
+
+    $id = (int) $id;
+    if ($auto_approve && function_exists('wp_set_comment_status')) {
+        // wp_new_comment runs WordPress moderation filters and ignores comment_approved;
+        // explicitly approve when the site administrator enabled argon_astro_auto_approve.
+        wp_set_comment_status($id, 'approve');
+    }
+    $actual_approved = $approved === 1;
+    if (function_exists('get_comment')) {
+        $saved = get_comment($id);
+        if ($saved) {
+            $actual_approved = (string) $saved->comment_approved === '1';
+        }
+    }
+    if (rest_sanitize_boolean($request->get_param('mailNotice'))) {
+        update_comment_meta($id, 'argon_mail_notice', '1');
+    }
+    if (rest_sanitize_boolean($request->get_param('markdown'))) {
+        update_comment_meta($id, 'argon_markdown', '1');
+    }
+    if (rest_sanitize_boolean($request->get_param('private'))) {
+        update_comment_meta($id, 'argon_private', '1');
+    }
+    if ($is_qq) {
+        update_comment_meta($id, 'qq_number', $contact);
+    }
+
+    return array(
+        'id' => $id,
+        'approved' => $actual_approved,
+        'markdown' => rest_sanitize_boolean($request->get_param('markdown')),
+        'private' => rest_sanitize_boolean($request->get_param('private')),
+    );
+}
+
+function argon_astro_edit_comment(WP_REST_Request $request) {
+    $id = (int) $request->get_param('id');
+    $contact = trim((string) $request->get_param('email'));
+    $content = trim((string) $request->get_param('content'));
+    $comment = get_comment($id);
+    if (!$comment) {
+        return new WP_Error('argon_astro_missing_comment', 'Comment was not found.', array('status' => 404));
+    }
+    $normalized = strtolower(argon_astro_normalize_contact_email($contact));
+    $stored_qq = (string) get_comment_meta($id, 'qq_number', true);
+    $matches_owner = strtolower((string) $comment->comment_author_email) === $normalized
+        || ($stored_qq !== '' && $stored_qq === $contact);
+    if ($content === '' || strlen($content) > 2000 || !argon_astro_is_valid_contact($contact) || !$matches_owner) {
+        return new WP_Error('argon_astro_forbidden_edit', 'Comment edit was refused.', array('status' => 403));
+    }
+    $history = json_decode((string) get_comment_meta($id, 'argon_edit_history', true), true);
+    if (!is_array($history)) {
+        $history = array();
+    }
+    $history[] = array('content' => $comment->comment_content, 'date' => gmdate('c'));
+    update_comment_meta($id, 'argon_edit_history', wp_json_encode($history));
+    wp_update_comment(array(
+        'comment_ID' => $id,
+        'comment_content' => $content,
+    ));
+    return array('id' => $id, 'content' => $content, 'editHistory' => $history);
+}
+
+function argon_astro_pin_comment(WP_REST_Request $request) {
+    $id = (int) $request->get_param('id');
+    $comment = get_comment($id);
+    if (!$comment) {
+        return new WP_Error('argon_astro_missing_comment', 'Comment was not found.', array('status' => 404));
+    }
+    $raw_pinned = $request->get_param('pinned');
+    if ($raw_pinned === null) {
+        $next = !(bool) get_comment_meta($id, 'argon_pinned', true);
+    } else {
+        $next = rest_sanitize_boolean($raw_pinned);
+    }
+    update_comment_meta($id, 'argon_pinned', $next ? '1' : '0');
+    return array('id' => $id, 'pinned' => $next);
+}
