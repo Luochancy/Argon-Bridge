@@ -171,6 +171,37 @@ function argon_astro_export_wp_bookmarks() {
     return $links;
 }
 
+function argon_astro_capture_sidebar_html($sidebar_id, $site_url = '') {
+    if (!function_exists('is_active_sidebar') || !function_exists('dynamic_sidebar')) {
+        return '';
+    }
+    if (!is_active_sidebar($sidebar_id)) {
+        return '';
+    }
+    ob_start();
+    dynamic_sidebar($sidebar_id);
+    $html = (string) ob_get_clean();
+    if (trim($html) === '') {
+        return '';
+    }
+    // Strip inline scripts and CMS admin/ajax endpoints, and relativize same-origin links.
+    $html = preg_replace('/<script\b[^>]*>[\s\S]*?<\/script>/i', '', $html);
+    if ($site_url !== '' && function_exists('argon_astro_url_origin')) {
+        $origin = argon_astro_url_origin($site_url);
+        if ($origin !== '') {
+            $html = preg_replace_callback(
+                '/(\b(?:href|action)=["\'])' . preg_quote($origin, '/') . '(\/[^"\'<>\s]*|(?=["\']))/i',
+                function ($m) {
+                    return $m[1] . ($m[2] !== '' ? $m[2] : '/');
+                },
+                $html
+            );
+        }
+    }
+    $html = str_ireplace(array('wp-json', 'wp-admin', 'admin-ajax.php'), '', $html);
+    return trim($html);
+}
+
 function argon_astro_export_wp_taxonomies($site_url = '') {
     if (!function_exists('get_terms')) {
         return array('tags' => array(), 'categories' => array());
@@ -309,6 +340,22 @@ function argon_astro_public_config() {
     $taxonomies = argon_astro_export_wp_taxonomies($site_url);
     if (!empty($taxonomies['tags']) || !empty($taxonomies['categories'])) {
         $config['taxonomies'] = $taxonomies;
+    }
+
+    // Export WordPress widget areas (leftbar-tools, leftbar-siteinfo-extra-tools, rightbar-tools).
+    if (!isset($config['sidebar']) || !is_array($config['sidebar'])) {
+        $config['sidebar'] = array();
+    }
+    $left_tools = argon_astro_capture_sidebar_html('leftbar-tools', $site_url);
+    $extra_tools = argon_astro_capture_sidebar_html('leftbar-siteinfo-extra-tools', $site_url);
+    $right_tools = argon_astro_capture_sidebar_html('rightbar-tools', $site_url);
+    if (function_exists('is_active_sidebar')) {
+        if ($left_tools !== '' || empty($config['sidebar']['widgets'])) {
+            $config['sidebar']['widgets'] = array();
+        }
+        $config['sidebar']['widgetsHtml'] = $left_tools;
+        $config['sidebar']['extraHtml'] = $extra_tools;
+        $config['sidebar']['rightWidgetsHtml'] = $right_tools;
     }
 
     if (function_exists('argon_astro_collect_config_media')) {

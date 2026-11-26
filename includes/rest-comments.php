@@ -112,6 +112,33 @@ function argon_astro_register_comment_routes() {
         'permission_callback' => 'argon_astro_rest_permission',
         'callback' => 'argon_astro_pin_comment',
     ));
+    register_rest_route('argon-astro/v1', '/comments/history', array(
+        'methods' => 'GET',
+        'permission_callback' => 'argon_astro_rest_permission',
+        'callback' => 'argon_astro_comment_history',
+    ));
+}
+
+function argon_astro_comment_history(WP_REST_Request $request) {
+    $id = (int) $request->get_param('id');
+    if ($id < 1) {
+        return new WP_Error('argon_astro_bad_id', 'Invalid comment id.', array('status' => 400));
+    }
+    $comment = function_exists('get_comment') ? get_comment($id) : null;
+    if (!$comment) {
+        return new WP_Error('argon_astro_missing_comment', 'Comment was not found.', array('status' => 404));
+    }
+    $private = (bool) get_comment_meta($id, 'argon_private', true);
+    if ($private) {
+        return array('id' => $id, 'history' => array());
+    }
+    $raw = (string) get_comment_meta($id, 'argon_edit_history', true);
+    $history = json_decode($raw, true);
+    if (!is_array($history)) {
+        $legacy = json_decode((string) get_comment_meta($id, 'comment_edit_history', true), true);
+        $history = is_array($legacy) ? $legacy : array();
+    }
+    return array('id' => $id, 'history' => array_values($history));
 }
 
 function argon_astro_list_comments(WP_REST_Request $request) {
@@ -196,6 +223,26 @@ function argon_astro_create_comment(WP_REST_Request $request) {
     }
     if ($is_qq) {
         update_comment_meta($id, 'qq_number', $contact);
+    }
+
+    // Send reply email notification when replying to a comment whose author opted into mailNotice.
+    $parent_id = (int) $request->get_param('parent');
+    if ($parent_id > 0 && $actual_approved && function_exists('get_comment') && function_exists('wp_mail')) {
+        $parent_comment = get_comment($parent_id);
+        $wants_mail = (string) get_comment_meta($parent_id, 'argon_mail_notice', true) === '1'
+            || (string) get_comment_meta($parent_id, 'enable_mailnotice', true) === 'true';
+        if ($parent_comment && $wants_mail) {
+            $parent_email = trim((string) ($parent_comment->comment_author_email ?? ''));
+            if ($parent_email !== '' && strtolower($parent_email) !== strtolower($normalized_email) && argon_astro_is_valid_contact($parent_email)) {
+                $site_name = function_exists('get_bloginfo') ? (string) get_bloginfo('name') : 'Blog';
+                $post_title = function_exists('get_the_title') ? (string) get_the_title($post_id) : '';
+                $subject = '[' . $site_name . '] 您的评论收到了新回复';
+                $message = "您好，" . (string) $parent_comment->comment_author . "：\n\n"
+                    . $author . " 回复了您在" . ($post_title !== '' ? "《" . $post_title . "》" : "文章") . "下的评论：\n\n"
+                    . $content . "\n";
+                @wp_mail($parent_email, $subject, $message);
+            }
+        }
     }
 
     return array(

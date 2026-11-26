@@ -48,6 +48,11 @@ function get_option($key, $default = false) { return array_key_exists($key, $GLO
 function update_option($key, $val, $autoload = null) { $GLOBALS['__wp_options'][$key] = $val; return true; }
 function delete_option($key) { unset($GLOBALS['__wp_options'][$key]); return true; }
 function get_post_meta($id, $key, $single = false) { return isset($GLOBALS['__wp_post_meta'][$id][$key]) ? $GLOBALS['__wp_post_meta'][$id][$key] : ''; }
+function update_post_meta($id, $key, $val) { $GLOBALS['__wp_post_meta'][$id][$key] = $val; return true; }
+function get_post($id) { return $GLOBALS['__wp_posts'][$id] ?? null; }
+function wp_mail($to, $subject, $message) { $GLOBALS['__wp_mails'][] = compact('to', 'subject', 'message'); return true; }
+function is_active_sidebar($id) { return !empty($GLOBALS['__wp_sidebars'][$id]); }
+function dynamic_sidebar($id) { echo $GLOBALS['__wp_sidebars'][$id] ?? ''; }
 function get_comment_meta($id, $key, $single = false) { return isset($GLOBALS['__wp_comment_meta'][$id][$key]) ? $GLOBALS['__wp_comment_meta'][$id][$key] : ''; }
 function update_comment_meta($id, $key, $val) { $GLOBALS['__wp_comment_meta'][$id][$key] = $val; return true; }
 function get_comment($id) { return isset($GLOBALS['__wp_comments'][$id]) ? $GLOBALS['__wp_comments'][$id] : null; }
@@ -113,6 +118,8 @@ require dirname(__DIR__) . '/includes/admin-schema.php';
 require dirname(__DIR__) . '/includes/rest-config.php';
 require dirname(__DIR__) . '/includes/rest-content.php';
 require dirname(__DIR__) . '/includes/rest-comments.php';
+require dirname(__DIR__) . '/includes/rest-post-unlock.php';
+require dirname(__DIR__) . '/includes/rest-views.php';
 require dirname(__DIR__) . '/includes/webhooks.php';
 require dirname(__DIR__) . '/includes/admin-view.php';
 require dirname(__DIR__) . '/includes/admin.php';
@@ -587,5 +594,52 @@ $flood_res = argon_astro_create_comment(new WP_REST_Request(array(
 )));
 assert_true(is_wp_error($flood_res) && is_array($flood_res->get_error_data()) && $flood_res->get_error_data()['status'] === 429, 'comment flood normalized to REST 429');
 $GLOBALS['__wp_force_comment_error'] = null;
+
+// 15. Post unlock (timing-safe password check) & views increment & comment history & reply wp_mail & sidebar widget capture
+$GLOBALS['__wp_posts'] = array(
+    77 => (object) array('ID' => 77, 'post_status' => 'publish', 'post_password' => 's3cret!', 'post_title' => 'Locked', 'post_content' => '<p>Top secret <a href="https://cms.example/aboutme.html">about</a></p>'),
+    88 => (object) array('ID' => 88, 'post_status' => 'publish', 'post_password' => '', 'post_title' => 'Open', 'post_content' => '<p>Open</p>'),
+);
+$bad_unlock = argon_astro_unlock_post(new WP_REST_Request(array('id' => 77, 'password' => 'wrong')));
+assert_true(is_wp_error($bad_unlock) && $bad_unlock->get_error_data()['status'] === 403, 'wrong password returns 403');
+$good_unlock = argon_astro_unlock_post(new WP_REST_Request(array('id' => 77, 'password' => 's3cret!')));
+assert_true(!is_wp_error($good_unlock) && strpos($good_unlock['html'], 'Top secret') !== false && strpos($good_unlock['html'], 'href="/aboutme.html"') !== false, 'correct password unlocks post & relativizes links');
+
+$GLOBALS['__wp_post_meta'][88]['views'] = 41;
+$v_get = argon_astro_get_views(new WP_REST_Request(array('id' => 88)));
+assert_true($v_get['views'] === 41, 'views GET returns existing count');
+$v_inc = argon_astro_increment_views(new WP_REST_Request(array('id' => 88)));
+assert_true($v_inc['views'] === 42, 'views POST increments count');
+
+$GLOBALS['__wp_mails'] = array();
+update_option('comment_moderation', 0);
+$p_comment = argon_astro_create_comment(new WP_REST_Request(array(
+    'postId' => 88,
+    'author' => 'ParentUser',
+    'email' => 'parent@example.com',
+    'content' => 'First',
+    'mailNotice' => true,
+)));
+$p_id = $p_comment['id'];
+argon_astro_edit_comment(new WP_REST_Request(array('id' => $p_id, 'email' => 'parent@example.com', 'content' => 'First edited')));
+$hist = argon_astro_comment_history(new WP_REST_Request(array('id' => $p_id)));
+assert_true(!is_wp_error($hist) && count($hist['history']) === 1 && $hist['history'][0]['content'] === 'First', 'comment edit history returned');
+
+argon_astro_create_comment(new WP_REST_Request(array(
+    'postId' => 88,
+    'parent' => $p_id,
+    'author' => 'Replier',
+    'email' => 'replier@example.com',
+    'content' => 'Nice!',
+)));
+assert_true(count($GLOBALS['__wp_mails']) === 1 && $GLOBALS['__wp_mails'][0]['to'] === 'parent@example.com', 'reply email notification sent via wp_mail');
+
+$GLOBALS['__wp_sidebars'] = array(
+    'leftbar-tools' => '<div class="widget"><a href="https://cms.example/archive.html">归档</a><script>alert(1)</script></div>',
+    'rightbar-tools' => '<div class="widget">Right Widget</div>',
+);
+$pub_widgets = argon_astro_public_config();
+assert_true(strpos($pub_widgets['sidebar']['widgetsHtml'], 'href="/archive.html"') !== false && strpos($pub_widgets['sidebar']['widgetsHtml'], '<script>') === false, 'leftbar-tools captured, relativized, scripts stripped');
+assert_true(strpos($pub_widgets['sidebar']['rightWidgetsHtml'], 'Right Widget') !== false, 'rightbar-tools captured');
 
 echo "bridge php tests ok\n";
