@@ -171,6 +171,41 @@ function argon_astro_export_wp_bookmarks() {
     return $links;
 }
 
+function argon_astro_export_wp_taxonomies($site_url = '') {
+    if (!function_exists('get_terms')) {
+        return array('tags' => array(), 'categories' => array());
+    }
+    $export = function ($taxonomy) use ($site_url) {
+        $terms = get_terms(array('taxonomy' => $taxonomy, 'hide_empty' => false));
+        if (!is_array($terms) || is_wp_error($terms)) {
+            return array();
+        }
+        $out = array();
+        foreach ($terms as $term) {
+            if (!is_object($term) || empty($term->name)) {
+                continue;
+            }
+            $permalink = '';
+            if (function_exists('get_term_link')) {
+                $link = get_term_link($term);
+                if (!is_wp_error($link) && is_string($link)) {
+                    $permalink = argon_astro_relativize_same_origin_url($link, $site_url);
+                }
+            }
+            $out[] = array(
+                'name' => (string) $term->name,
+                'slug' => isset($term->slug) ? (string) $term->slug : '',
+                'permalink' => $permalink,
+            );
+        }
+        return $out;
+    };
+    return array(
+        'tags' => $export('post_tag'),
+        'categories' => $export('category'),
+    );
+}
+
 function argon_astro_public_config() {
     $stored = get_option('argon_astro_config', array());
     if (!is_array($stored)) {
@@ -269,6 +304,11 @@ function argon_astro_public_config() {
         if (!empty($bookmarks)) {
             $config['friendLinks'] = $bookmarks;
         }
+    }
+
+    $taxonomies = argon_astro_export_wp_taxonomies($site_url);
+    if (!empty($taxonomies['tags']) || !empty($taxonomies['categories'])) {
+        $config['taxonomies'] = $taxonomies;
     }
 
     if (function_exists('argon_astro_collect_config_media')) {
