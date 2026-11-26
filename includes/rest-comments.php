@@ -51,9 +51,15 @@ function argon_astro_format_comment($comment, $parent_authors = array()) {
             }
         }
     }
-    $date = function_exists('mysql_to_rfc3339')
-        ? mysql_to_rfc3339($comment->comment_date_gmt)
-        : (string) $comment->comment_date_gmt;
+    $raw_gmt = trim((string) $comment->comment_date_gmt);
+    if (preg_match('/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/', $raw_gmt)) {
+        $date = preg_replace('/\s+/', 'T', $raw_gmt) . 'Z';
+    } elseif ($raw_gmt !== '' && $raw_gmt !== '0000-00-00 00:00:00') {
+        $ts = strtotime($raw_gmt);
+        $date = $ts !== false ? gmdate('Y-m-d\TH:i:s\Z', $ts) : $raw_gmt;
+    } else {
+        $date = gmdate('Y-m-d\TH:i:s\Z');
+    }
 
     return array(
         'id' => $id,

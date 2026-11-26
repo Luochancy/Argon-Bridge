@@ -606,10 +606,30 @@ $good_unlock = argon_astro_unlock_post(new WP_REST_Request(array('id' => 77, 'pa
 assert_true(!is_wp_error($good_unlock) && strpos($good_unlock['html'], 'Top secret') !== false && strpos($good_unlock['html'], 'href="/aboutme.html"') !== false, 'correct password unlocks post & relativizes links');
 
 $GLOBALS['__wp_post_meta'][88]['views'] = 41;
+$GLOBALS['__wp_post_meta'][77]['views'] = 9;
 $v_get = argon_astro_get_views(new WP_REST_Request(array('id' => 88)));
 assert_true($v_get['views'] === 41, 'views GET returns existing count');
+$v_batch = argon_astro_get_views(new WP_REST_Request(array('ids' => '88,77')));
+assert_true($v_batch['views']['88'] === 41 && $v_batch['views']['77'] === 9, 'views batch GET returns map of counts');
 $v_inc = argon_astro_increment_views(new WP_REST_Request(array('id' => 88)));
 assert_true($v_inc['views'] === 42, 'views POST increments count');
+
+$tz_comment = argon_astro_format_comment((object) array(
+    'comment_ID' => 900,
+    'comment_parent' => 0,
+    'comment_author' => 'Clock',
+    'comment_author_email' => 'clock@example.com',
+    'comment_author_url' => '',
+    'comment_date_gmt' => '2026-11-26 08:40:00',
+    'comment_content' => 'tick',
+    'comment_agent' => '',
+));
+assert_true($tz_comment['date'] === '2026-11-26T08:40:00Z', 'comment date_gmt exports explicit UTC Z suffix');
+
+update_option('timezone_string', 'Asia/Shanghai');
+$pub_tz = argon_astro_public_config();
+assert_true($pub_tz['site']['timezone'] === 'Asia/Shanghai', 'WP site timezone exported');
+assert_true(strpos($admin_html, 'argon_astro_config[site][url]') !== false, 'site.url field rendered in admin UI');
 
 $GLOBALS['__wp_mails'] = array();
 update_option('comment_moderation', 0);

@@ -191,6 +191,7 @@ function argon_astro_schema_defaults() {
             'description' => '',
             'url' => '',
             'language' => '',
+            'timezone' => '',
             'keywords' => '',
             'dateFormat' => 'YMD',
         ),
@@ -245,7 +246,7 @@ function argon_astro_schema_defaults() {
         'article' => array(
             'listLayout' => '1',
             'waterflow' => '1',
-            'meta' => array('time', 'categories'),
+            'meta' => array('time', 'views', 'comments', 'categories'),
             'hideCategories' => false,
             'showReadingTime' => true,
             'readingSpeed' => 300,
@@ -1568,6 +1569,9 @@ function argon_astro_sanitize_nested_config(array $input, array $previous = arra
         }
         if (array_key_exists('language', $s)) {
             $clean['site']['language'] = argon_astro_clean_text($s['language']);
+        }
+        if (array_key_exists('timezone', $s)) {
+            $clean['site']['timezone'] = argon_astro_clean_text($s['timezone']);
         }
         if (array_key_exists('keywords', $s)) {
             $clean['site']['keywords'] = argon_astro_clean_text($s['keywords']);

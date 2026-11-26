@@ -76,7 +76,9 @@ function argon_astro_map_post($post) {
         'categories' => is_wp_error($categories) ? array() : $categories,
         'tags' => is_wp_error($tags) ? array() : $tags,
         'commentCount' => (int) $post->comment_count,
-        'views' => max(0, (int) get_post_meta($post->ID, 'views', true)),
+        'views' => function_exists('argon_astro_read_post_views')
+            ? argon_astro_read_post_views($post->ID)
+            : max(0, (int) get_post_meta($post->ID, 'views', true)),
         'upvotes' => (int) get_post_meta($post->ID, 'argon_upvote', true),
         'featuredMediaId' => $thumb_id,
         'featuredMediaUrl' => $thumb_url,

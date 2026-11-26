@@ -41,6 +41,13 @@ function argon_astro_render_tab_content(array $ctx) {
                         </td>
                     </tr>
                     <tr>
+                        <th><label>前端站点地址 (Site URL)</label></th>
+                        <td>
+                            <input type="url" class="large-text" name="argon_astro_config[site][url]" value="<?php echo esc_attr(isset($site['url']) ? (string) $site['url'] : ''); ?>" placeholder="https://blog.example.com" />
+                            <p class="description">用于 SEO Canonical、Sitemap、RSS 订阅、JSON-LD 与文章分享链接。也可在 Cloudflare / CI 环境变量中配置 <code>SITE_URL</code> 覆盖。</p>
+                        </td>
+                    </tr>
+                    <tr>
                         <th><label>SEO 描述与关键词</label></th>
                         <td>
                             <p><label>SEO 网站描述 (Description)<br /><textarea rows="3" class="large-text" name="argon_astro_config[site][description]" placeholder="<?php echo esc_attr((string) get_bloginfo('description')); ?>"><?php echo esc_textarea($site['description']); ?></textarea></label></p>

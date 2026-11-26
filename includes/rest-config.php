@@ -237,6 +237,29 @@ function argon_astro_export_wp_taxonomies($site_url = '') {
     );
 }
 
+function argon_astro_wp_timezone_string() {
+    if (function_exists('wp_timezone_string')) {
+        $tz = trim((string) wp_timezone_string());
+        if ($tz !== '') {
+            return $tz;
+        }
+    }
+    if (function_exists('get_option')) {
+        $tz_string = trim((string) get_option('timezone_string', ''));
+        if ($tz_string !== '') {
+            return $tz_string;
+        }
+        $offset = get_option('gmt_offset', '');
+        if ($offset !== '' && is_numeric($offset)) {
+            $minutes = (int) round(((float) $offset) * 60);
+            $sign = $minutes >= 0 ? '+' : '-';
+            $abs = abs($minutes);
+            return sprintf('%s%02d:%02d', $sign, (int) floor($abs / 60), $abs % 60);
+        }
+    }
+    return '';
+}
+
 function argon_astro_public_config() {
     $stored = get_option('argon_astro_config', array());
     if (!is_array($stored)) {
@@ -264,6 +287,24 @@ function argon_astro_public_config() {
     }
     if (isset($config['site']['url']) && trim((string) $config['site']['url']) === '') {
         unset($config['site']['url']);
+    }
+    if (empty($config['site']['timezone'])) {
+        $wp_tz = argon_astro_wp_timezone_string();
+        if ($wp_tz !== '') {
+            $config['site']['timezone'] = $wp_tz;
+        }
+    }
+    if (empty($config['article']['meta']) && function_exists('get_option')) {
+        $legacy_meta = get_option('argon_article_meta', '');
+        if ($legacy_meta !== '' && function_exists('argon_astro_parse_article_meta')) {
+            $parsed_meta = argon_astro_parse_article_meta($legacy_meta);
+            if (!empty($parsed_meta)) {
+                if (!isset($config['article']) || !is_array($config['article'])) {
+                    $config['article'] = array();
+                }
+                $config['article']['meta'] = $parsed_meta;
+            }
+        }
     }
     if (empty($config['site']['icon']) && function_exists('get_site_icon_url')) {
         $site_icon = (string) get_site_icon_url(192);
