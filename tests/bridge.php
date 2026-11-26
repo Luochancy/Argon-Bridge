@@ -25,6 +25,9 @@ if (!class_exists('WP_Error')) {
             $this->message = $message;
             $this->data = $data;
         }
+        public function get_error_code() { return $this->code; }
+        public function get_error_message() { return $this->message; }
+        public function get_error_data() { return $this->data; }
     }
 }
 if (!class_exists('WP_REST_Request')) {
@@ -55,6 +58,9 @@ function get_comments($args = array()) {
     }));
 }
 function wp_new_comment($data, $wp_error = false) {
+    if (!empty($GLOBALS['__wp_force_comment_error'])) {
+        return $GLOBALS['__wp_force_comment_error'];
+    }
     static $next_id = 100;
     $id = $next_id++;
     $GLOBALS['__wp_comments'][$id] = (object) array_merge(array(
@@ -64,6 +70,11 @@ function wp_new_comment($data, $wp_error = false) {
     ), $data);
     return $id;
 }
+function get_nav_menu_locations() { return $GLOBALS['__wp_nav_locations'] ?? array(); }
+function wp_get_nav_menu_items($menu_id) { return $GLOBALS['__wp_nav_items'][$menu_id] ?? array(); }
+function get_bookmarks($args = array()) { return $GLOBALS['__wp_bookmarks'] ?? array(); }
+function get_permalink($post) { return is_object($post) && isset($post->permalink) ? $post->permalink : ''; }
+function get_page_template_slug($id) { return $GLOBALS['__wp_page_templates'][$id] ?? ''; }
 function wp_update_comment($data) {
     $id = (int) $data['comment_ID'];
     if (isset($GLOBALS['__wp_comments'][$id])) {
@@ -100,6 +111,7 @@ require dirname(__DIR__) . '/includes/signature.php';
 require dirname(__DIR__) . '/includes/media.php';
 require dirname(__DIR__) . '/includes/admin-schema.php';
 require dirname(__DIR__) . '/includes/rest-config.php';
+require dirname(__DIR__) . '/includes/rest-content.php';
 require dirname(__DIR__) . '/includes/rest-comments.php';
 require dirname(__DIR__) . '/includes/webhooks.php';
 require dirname(__DIR__) . '/includes/admin-view.php';
@@ -510,5 +522,70 @@ assert_true($pub['site']['title'] === 'Demo Blog', 'empty site.title falls back 
 assert_true($pub['site']['language'] === 'zh-CN', 'empty site.language falls back to WP language');
 assert_true($pub['site']['description'] === 'Custom SEO Desc', 'non-empty site.description overrides WP tagline');
 assert_true(!array_key_exists('url', $pub['site']), 'empty site.url omitted so local site.url stays intact');
+
+// 13. Nav menus, icon extraction, same-origin URL relativization, bookmarks fallback, and permalinks
+$GLOBALS['__wp_nav_locations'] = array(
+    'toolbar_menu' => 1,
+    'leftbar_menu' => 2,
+    'leftbar_author_links' => 3,
+);
+$GLOBALS['__wp_nav_items'] = array(
+    1 => array(
+        (object) array('ID' => 11, 'menu_item_parent' => 0, 'title' => '<i class="fa fa-home"></i> 首页', 'url' => 'https://cms.example/', 'target' => '', 'classes' => array()),
+        (object) array('ID' => 12, 'menu_item_parent' => 0, 'title' => '<i class="fa fa-link"></i> 友人帐', 'url' => 'https://cms.example/links.html', 'target' => '', 'classes' => array()),
+        (object) array('ID' => 13, 'menu_item_parent' => 0, 'title' => '<i class="fa fa-subway"></i> 开往', 'url' => 'https://www.travellings.cn/go.html', 'target' => '_blank', 'classes' => array()),
+    ),
+    2 => array(
+        (object) array('ID' => 21, 'menu_item_parent' => 0, 'title' => '关于我', 'url' => 'https://cms.example/aboutme.html', 'target' => '', 'classes' => array('fa', 'fa-user-o')),
+    ),
+    3 => array(
+        (object) array('ID' => 31, 'menu_item_parent' => 0, 'title' => '<i class="fa fa-github"></i> GitHub', 'url' => 'https://github.com/Luochancy', 'target' => '_blank', 'classes' => array()),
+    ),
+);
+$GLOBALS['__wp_bookmarks'] = array(
+    (object) array('link_name' => 'Friend A', 'link_url' => 'https://friend-a.example', 'link_description' => 'Hello', 'link_image' => 'https://cdn.example/a.png'),
+);
+update_option('argon_astro_config', array(
+    'version' => 1,
+    'toolbar' => array('iconLink' => 'https://cms.example/'),
+    'article' => array('archivesUrl' => 'https://cms.example/archive.html'),
+));
+$pub_menus = argon_astro_public_config();
+assert_true($pub_menus['toolbar']['iconLink'] === '/', 'same-origin toolbar.iconLink relativized');
+assert_true($pub_menus['article']['archivesUrl'] === '/archive.html', 'same-origin archivesUrl relativized');
+assert_true(count($pub_menus['toolbar']['menu']) === 3, 'toolbar_menu exported');
+assert_true($pub_menus['toolbar']['menu'][0]['label'] === '首页' && $pub_menus['toolbar']['menu'][0]['icon'] === 'fa fa-home' && $pub_menus['toolbar']['menu'][0]['href'] === '/', 'menu icon & same-origin href parsed');
+assert_true($pub_menus['toolbar']['menu'][1]['href'] === '/links.html', 'menu .html permalink relativized');
+assert_true($pub_menus['toolbar']['menu'][2]['href'] === 'https://www.travellings.cn/go.html' && $pub_menus['toolbar']['menu'][2]['target'] === '_blank', 'external menu href & target preserved');
+assert_true($pub_menus['sidebar']['menu'][0]['icon'] === 'fa fa-user-o' && $pub_menus['sidebar']['menu'][0]['href'] === '/aboutme.html', 'leftbar_menu class icon parsed');
+assert_true($pub_menus['sidebar']['authorLinks'][0]['label'] === 'GitHub' && $pub_menus['sidebar']['authorLinks'][0]['icon'] === 'fa fa-github', 'leftbar_author_links exported');
+assert_true(count($pub_menus['friendLinks']) === 1 && $pub_menus['friendLinks'][0]['name'] === 'Friend A', 'WP bookmarks exported to friendLinks');
+
+assert_true(argon_astro_relative_permalink((object) array('permalink' => 'https://cms.example/archives/707.html')) === '/archives/707.html', 'numeric .html permalink preserved');
+assert_true(argon_astro_relative_permalink((object) array('permalink' => 'https://cms.example/aboutme.html')) === '/aboutme.html', 'page .html permalink preserved');
+assert_true(argon_astro_relative_permalink((object) array('permalink' => 'https://cms.example/?p=707')) === '', 'plain query permalink ignored');
+$GLOBALS['__wp_page_templates'] = array(50 => 'timeline.php', 51 => 'msgboard.php', 52 => 'shuoshuo.php');
+assert_true(argon_astro_resolve_page_template((object) array('ID' => 50, 'post_type' => 'page')) === 'timeline', 'timeline.php mapped');
+assert_true(argon_astro_resolve_page_template((object) array('ID' => 51, 'post_type' => 'page')) === 'message', 'msgboard.php mapped');
+assert_true(argon_astro_resolve_page_template((object) array('ID' => 52, 'post_type' => 'page')) === 'shuoshuo', 'shuoshuo.php mapped');
+
+// 14. Comment duplicate & flood errors return clean 409/429 REST status instead of 500
+$GLOBALS['__wp_force_comment_error'] = new WP_Error('comment_duplicate', 'Duplicate comment detected', 409);
+$dup_res = argon_astro_create_comment(new WP_REST_Request(array(
+    'postId' => 10,
+    'author' => 'Tester',
+    'email' => 'test@example.com',
+    'content' => 'dup',
+)));
+assert_true(is_wp_error($dup_res) && is_array($dup_res->get_error_data()) && $dup_res->get_error_data()['status'] === 409, 'duplicate comment normalized to REST 409');
+$GLOBALS['__wp_force_comment_error'] = new WP_Error('comment_flood', 'Too fast', 429);
+$flood_res = argon_astro_create_comment(new WP_REST_Request(array(
+    'postId' => 10,
+    'author' => 'Tester',
+    'email' => 'test@example.com',
+    'content' => 'fast',
+)));
+assert_true(is_wp_error($flood_res) && is_array($flood_res->get_error_data()) && $flood_res->get_error_data()['status'] === 429, 'comment flood normalized to REST 429');
+$GLOBALS['__wp_force_comment_error'] = null;
 
 echo "bridge php tests ok\n";

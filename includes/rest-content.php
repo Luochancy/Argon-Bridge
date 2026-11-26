@@ -3,6 +3,49 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+function argon_astro_relative_permalink($post) {
+    if (!function_exists('get_permalink')) {
+        return '';
+    }
+    $permalink = (string) get_permalink($post);
+    if ($permalink === '') {
+        return '';
+    }
+    $parts = parse_url($permalink);
+    $path = isset($parts['path']) ? (string) $parts['path'] : '';
+    // Ignore plain ?p=123 query permalinks where path is just "/".
+    if ($path === '' || $path === '/' || !empty($parts['query'])) {
+        return '';
+    }
+    // Strip WordPress subdirectory base path if installed in a subfolder.
+    if (function_exists('home_url')) {
+        $home_path = (string) parse_url(home_url('/'), PHP_URL_PATH);
+        $home_prefix = rtrim($home_path, '/');
+        if ($home_prefix !== '' && strpos($path, $home_prefix . '/') === 0) {
+            $path = substr($path, strlen($home_prefix));
+        }
+    }
+    return $path;
+}
+
+function argon_astro_resolve_page_template($post) {
+    if ($post->post_type !== 'page') {
+        return '';
+    }
+    $slug = function_exists('get_page_template_slug') ? (string) get_page_template_slug($post->ID) : '';
+    $base = strtolower(basename($slug));
+    if ($base === 'timeline.php') {
+        return 'timeline';
+    }
+    if ($base === 'msgboard.php') {
+        return 'message';
+    }
+    if ($base === 'shuoshuo.php') {
+        return 'shuoshuo';
+    }
+    return 'page';
+}
+
 function argon_astro_map_post($post) {
     $categories = wp_get_post_terms($post->ID, 'category', array('fields' => 'names'));
     $tags = wp_get_post_terms($post->ID, 'post_tag', array('fields' => 'names'));
@@ -13,10 +56,16 @@ function argon_astro_map_post($post) {
     $sticky = $post->post_type === 'shuoshuo'
         ? (bool) get_post_meta($post->ID, 'argon_sticky', true)
         : is_sticky($post->ID);
+    $comments_open = function_exists('comments_open')
+        ? (bool) comments_open($post->ID)
+        : (isset($post->comment_status) && $post->comment_status === 'open');
 
     $item = array(
         'id' => (int) $post->ID,
         'slug' => $post->post_name,
+        'permalink' => argon_astro_relative_permalink($post),
+        'template' => argon_astro_resolve_page_template($post),
+        'commentsOpen' => $comments_open,
         'title' => get_the_title($post),
         'date' => get_post_time('c', true, $post),
         'modified' => $modified,

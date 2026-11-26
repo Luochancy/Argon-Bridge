@@ -67,8 +67,14 @@ function argon_astro_extract_config_image_urls($config, $site_url) {
     if (!empty($config['background']['darkUrl'])) {
         $candidates[] = $config['background']['darkUrl'];
     }
+    if (!empty($config['toolbar']['icon'])) {
+        $candidates[] = $config['toolbar']['icon'];
+    }
     if (!empty($config['sidebar']['authorImage'])) {
         $candidates[] = $config['sidebar']['authorImage'];
+    }
+    if (!empty($config['article']['donateQr'])) {
+        $candidates[] = $config['article']['donateQr'];
     }
     if (!empty($config['friendLinks']) && is_array($config['friendLinks'])) {
         foreach ($config['friendLinks'] as $link) {

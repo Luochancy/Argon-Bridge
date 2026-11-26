@@ -136,6 +136,11 @@ function argon_astro_create_comment(WP_REST_Request $request) {
     $auto_approve = (bool) get_option('argon_astro_auto_approve', false);
     $approved = $auto_approve ? 1 : (get_option('comment_moderation') ? 0 : 1);
 
+    $agent = '';
+    if (method_exists($request, 'get_header')) {
+        $agent = sanitize_text_field((string) $request->get_header('user-agent'));
+    }
+
     $id = wp_new_comment(array(
         'comment_post_ID' => $post_id,
         'comment_content' => $content,
@@ -144,9 +149,27 @@ function argon_astro_create_comment(WP_REST_Request $request) {
         'comment_author_url' => esc_url_raw((string) $request->get_param('url')),
         'comment_parent' => (int) $request->get_param('parent'),
         'comment_approved' => $approved,
+        'comment_type' => 'comment',
+        'comment_agent' => $agent,
+        'comment_author_IP' => '',
     ), true);
     if (is_wp_error($id)) {
-        return $id;
+        $code = method_exists($id, 'get_error_code') ? (string) $id->get_error_code() : 'comment_error';
+        if ($code === 'comment_duplicate') {
+            return new WP_Error('comment_duplicate', '检测到重复评论，请勿重复提交。', array('status' => 409));
+        }
+        if ($code === 'comment_flood') {
+            return new WP_Error('comment_flood', '评论提交过于频繁，请稍后再试。', array('status' => 429));
+        }
+        $raw_data = method_exists($id, 'get_error_data') ? $id->get_error_data() : null;
+        $status = 400;
+        if (is_array($raw_data) && isset($raw_data['status']) && is_numeric($raw_data['status'])) {
+            $status = (int) $raw_data['status'];
+        } elseif (is_numeric($raw_data) && (int) $raw_data >= 400 && (int) $raw_data < 600) {
+            $status = (int) $raw_data;
+        }
+        $msg = method_exists($id, 'get_error_message') ? (string) $id->get_error_message() : '评论提交失败。';
+        return new WP_Error($code, $msg !== '' ? $msg : '评论提交失败。', array('status' => $status));
     }
 
     $id = (int) $id;

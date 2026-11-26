@@ -17,6 +17,160 @@ function argon_astro_default_config() {
     );
 }
 
+function argon_astro_relativize_same_origin_url($url, $site_url = '') {
+    $url = trim((string) $url);
+    if ($url === '') {
+        return '';
+    }
+    if ($site_url === '' && function_exists('home_url')) {
+        $site_url = home_url('/');
+    }
+    if ($site_url !== '' && function_exists('argon_astro_is_same_origin') && argon_astro_is_same_origin($url, $site_url)) {
+        $parts = parse_url($url);
+        $path = isset($parts['path']) && $parts['path'] !== '' ? $parts['path'] : '/';
+        if (!empty($parts['query'])) {
+            $path .= '?' . $parts['query'];
+        }
+        if (!empty($parts['fragment'])) {
+            $path .= '#' . $parts['fragment'];
+        }
+        return $path;
+    }
+    return $url;
+}
+
+function argon_astro_extract_menu_icon_and_label($raw_title, $classes = array()) {
+    $title = (string) $raw_title;
+    $icon_tokens = array();
+
+    if (preg_match('/<i\b[^>]*class=["\']([^"\']+)["\'][^>]*>\s*<\/i>/i', $title, $m)) {
+        foreach (preg_split('/\s+/', trim($m[1])) as $tok) {
+            if (preg_match('/^(?:fa|ni)(?:-[a-z0-9-]+)?$/i', $tok)) {
+                $icon_tokens[] = $tok;
+            }
+        }
+        $title = preg_replace('/<i\b[^>]*>\s*<\/i>/i', '', $title, 1);
+    }
+
+    if (empty($icon_tokens) && is_array($classes)) {
+        foreach ($classes as $cls) {
+            $cls = trim((string) $cls);
+            if (preg_match('/^(?:fa|ni)(?:-[a-z0-9-]+)?$/i', $cls)) {
+                $icon_tokens[] = $cls;
+            }
+        }
+    }
+
+    $icon = '';
+    if (!empty($icon_tokens)) {
+        $icon_tokens = array_values(array_unique($icon_tokens));
+        $has_prefix = false;
+        foreach ($icon_tokens as $tok) {
+            if (strtolower($tok) === 'fa' || strtolower($tok) === 'ni') {
+                $has_prefix = true;
+                break;
+            }
+        }
+        if (!$has_prefix && stripos($icon_tokens[0], 'fa-') === 0) {
+            array_unshift($icon_tokens, 'fa');
+        }
+        $icon = implode(' ', $icon_tokens);
+    }
+
+    $label = trim(html_entity_decode(strip_tags($title), ENT_QUOTES, 'UTF-8'));
+    return array('label' => $label, 'icon' => $icon);
+}
+
+function argon_astro_export_nav_menu($location, $site_url = '') {
+    if (!function_exists('get_nav_menu_locations') || !function_exists('wp_get_nav_menu_items')) {
+        return null;
+    }
+    $locations = get_nav_menu_locations();
+    if (!is_array($locations) || empty($locations[$location])) {
+        return null;
+    }
+    $raw_items = wp_get_nav_menu_items((int) $locations[$location]);
+    if (!is_array($raw_items)) {
+        return null;
+    }
+
+    $nodes = array();
+    $children_by_parent = array();
+    foreach ($raw_items as $item) {
+        if (!is_object($item)) {
+            continue;
+        }
+        $id = isset($item->ID) ? (int) $item->ID : 0;
+        $parent = isset($item->menu_item_parent) ? (int) $item->menu_item_parent : 0;
+        $classes = isset($item->classes) && is_array($item->classes) ? $item->classes : array();
+        $parsed = argon_astro_extract_menu_icon_and_label(isset($item->title) ? $item->title : '', $classes);
+        $href = argon_astro_relativize_same_origin_url(isset($item->url) ? $item->url : '#', $site_url);
+        $target = isset($item->target) ? trim((string) $item->target) : '';
+        $node = array(
+            'label' => $parsed['label'],
+            'href' => $href !== '' ? $href : '#',
+            'children' => array(),
+        );
+        if ($parsed['icon'] !== '') {
+            $node['icon'] = $parsed['icon'];
+        }
+        if ($target !== '') {
+            $node['target'] = $target;
+        }
+        $nodes[$id] = $node;
+        $children_by_parent[$parent][] = $id;
+    }
+
+    $build_tree = function ($parent_id, $depth = 0) use (&$build_tree, &$nodes, &$children_by_parent) {
+        if ($depth > 4 || empty($children_by_parent[$parent_id])) {
+            return array();
+        }
+        $out = array();
+        foreach ($children_by_parent[$parent_id] as $cid) {
+            if (!isset($nodes[$cid])) {
+                continue;
+            }
+            $node = $nodes[$cid];
+            $node['children'] = $build_tree($cid, $depth + 1);
+            $out[] = $node;
+        }
+        return $out;
+    };
+
+    return $build_tree(0, 0);
+}
+
+function argon_astro_export_wp_bookmarks() {
+    if (!function_exists('get_bookmarks')) {
+        return array();
+    }
+    $bookmarks = get_bookmarks(array(
+        'orderby' => 'name',
+        'order' => 'ASC',
+    ));
+    if (!is_array($bookmarks)) {
+        return array();
+    }
+    $links = array();
+    foreach ($bookmarks as $bm) {
+        if (!is_object($bm)) {
+            continue;
+        }
+        $name = trim((string) ($bm->link_name ?? ''));
+        $url = trim((string) ($bm->link_url ?? ''));
+        if ($name === '' && $url === '') {
+            continue;
+        }
+        $links[] = array(
+            'name' => $name,
+            'url' => $url,
+            'description' => trim((string) ($bm->link_description ?? '')),
+            'avatar' => trim((string) ($bm->link_image ?? '')),
+        );
+    }
+    return $links;
+}
+
 function argon_astro_public_config() {
     $stored = get_option('argon_astro_config', array());
     if (!is_array($stored)) {
@@ -44,6 +198,71 @@ function argon_astro_public_config() {
     }
     if (isset($config['site']['url']) && trim((string) $config['site']['url']) === '') {
         unset($config['site']['url']);
+    }
+
+    $site_url = function_exists('home_url') ? home_url('/') : '';
+
+    // Relativize same-origin links in config so static site never redirects back to the headless CMS host.
+    if (!empty($config['toolbar']['iconLink'])) {
+        $config['toolbar']['iconLink'] = argon_astro_relativize_same_origin_url($config['toolbar']['iconLink'], $site_url);
+    }
+    if (!empty($config['article']['archivesUrl'])) {
+        $config['article']['archivesUrl'] = argon_astro_relativize_same_origin_url($config['article']['archivesUrl'], $site_url);
+    }
+
+    // Export WordPress nav menus (Appearance -> Menus) when assigned to Argon locations.
+    $toolbar_menu = argon_astro_export_nav_menu('toolbar_menu', $site_url);
+    if (is_array($toolbar_menu) && !empty($toolbar_menu)) {
+        if (!isset($config['toolbar']) || !is_array($config['toolbar'])) {
+            $config['toolbar'] = array();
+        }
+        $config['toolbar']['menu'] = $toolbar_menu;
+    }
+
+    $leftbar_menu = argon_astro_export_nav_menu('leftbar_menu', $site_url);
+    if (is_array($leftbar_menu) && !empty($leftbar_menu)) {
+        if (!isset($config['sidebar']) || !is_array($config['sidebar'])) {
+            $config['sidebar'] = array();
+        }
+        $config['sidebar']['menu'] = $leftbar_menu;
+    }
+
+    $author_links = argon_astro_export_nav_menu('leftbar_author_links', $site_url);
+    if (is_array($author_links) && !empty($author_links)) {
+        if (!isset($config['sidebar']) || !is_array($config['sidebar'])) {
+            $config['sidebar'] = array();
+        }
+        $config['sidebar']['authorLinks'] = array_map(function ($item) {
+            $out = array(
+                'label' => $item['label'],
+                'href' => $item['href'],
+            );
+            if (!empty($item['icon'])) {
+                $out['icon'] = $item['icon'];
+            }
+            return $out;
+        }, $author_links);
+    }
+
+    $sidebar_friend_links = argon_astro_export_nav_menu('leftbar_friend_links', $site_url);
+    if (is_array($sidebar_friend_links) && !empty($sidebar_friend_links)) {
+        if (!isset($config['sidebar']) || !is_array($config['sidebar'])) {
+            $config['sidebar'] = array();
+        }
+        $config['sidebar']['friendLinks'] = array_map(function ($item) {
+            return array(
+                'label' => $item['label'],
+                'href' => $item['href'],
+            );
+        }, $sidebar_friend_links);
+    }
+
+    // Fall back to WordPress native Link Manager (wp_links / get_bookmarks) when friendLinks config is empty.
+    if (empty($config['friendLinks']) || !is_array($config['friendLinks'])) {
+        $bookmarks = argon_astro_export_wp_bookmarks();
+        if (!empty($bookmarks)) {
+            $config['friendLinks'] = $bookmarks;
+        }
     }
 
     if (function_exists('argon_astro_collect_config_media')) {
