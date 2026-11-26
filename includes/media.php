@@ -58,6 +58,9 @@ function argon_astro_extract_config_image_urls($config, $site_url) {
         return array();
     }
     $candidates = array();
+    if (!empty($config['site']['icon'])) {
+        $candidates[] = $config['site']['icon'];
+    }
     if (!empty($config['banner']['backgroundUrl'])) {
         $candidates[] = $config['banner']['backgroundUrl'];
     }

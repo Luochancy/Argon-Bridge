@@ -199,6 +199,12 @@ function argon_astro_public_config() {
     if (isset($config['site']['url']) && trim((string) $config['site']['url']) === '') {
         unset($config['site']['url']);
     }
+    if (empty($config['site']['icon']) && function_exists('get_site_icon_url')) {
+        $site_icon = (string) get_site_icon_url(192);
+        if ($site_icon !== '') {
+            $config['site']['icon'] = $site_icon;
+        }
+    }
 
     $site_url = function_exists('home_url') ? home_url('/') : '';
 
